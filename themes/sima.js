@@ -24,6 +24,7 @@
      squash: [min, max] escorzo radial (def. [0.38, 1])
      solid: true dibuja los bichos opacos sobre ctx (para sprites
             oscuros que el pipeline aditivo volvería transparentes)
+     solidPlayer: igual que solid pero solo para el jugador
      spriteGain: 0..1 atenúa sprites en el buffer aditivo (def. 0.6)
      scorch: true (carbón) u objeto {types, color, alpha, bigAlpha,
             life} — los bichos dejan rastro en la pared (chamuscado,
@@ -344,21 +345,23 @@
         if (!img) { placeholder().drawPlayer(g); return; }
         const p = g.webPoint(g.shape, g.player.lane, 1.0);
         const size = playerSize * (g.R / 300);
-        const s = g.sctx;
+        // solidPlayer: sprite oscuro -> opaco sobre ctx (ver drawEnemies)
+        const s = cfg.solidPlayer ? g.ctx : g.sctx;
         s.save();
         s.translate(p.x, p.y);
         s.rotate(p.a - Math.PI / 2); // boca hacia el fondo del hoyo
         s.globalCompositeOperation = 'source-over';
-        try { s.filter = `brightness(${(cfg.spriteGain ?? 0.6).toFixed(2)})`; } catch (err) { /* sin filter */ }
+        const gain = cfg.solidPlayer ? 1 : (cfg.spriteGain ?? 0.6);
+        try { s.filter = `brightness(${gain.toFixed(2)})`; } catch (err) { /* sin filter */ }
         s.drawImage(img, -size / 2, -size / 2, size, size);
         s.restore();
         if (g.muzzle > 0) {
           const tx = p.x + Math.cos(p.a + Math.PI) * size * 0.42;
           const ty = p.y + Math.sin(p.a + Math.PI) * size * 0.42;
-          s.fillStyle = `rgba(255,255,255,${g.muzzle / 0.06})`;
-          s.beginPath();
-          s.arc(tx, ty, 10 * (g.R / 300) * (g.muzzle / 0.06) + 2, 0, Math.PI * 2);
-          s.fill();
+          g.sctx.fillStyle = `rgba(255,255,255,${g.muzzle / 0.06})`;
+          g.sctx.beginPath();
+          g.sctx.arc(tx, ty, 10 * (g.R / 300) * (g.muzzle / 0.06) + 2, 0, Math.PI * 2);
+          g.sctx.fill();
         }
       },
 
