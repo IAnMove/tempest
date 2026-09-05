@@ -24,6 +24,7 @@
     files: { player: 'ballesta_enana', flipper: 'rata', tanker: 'slime', spiker: 'cienpies' },
     fondo: true,
 
+    motion: { tanker: 'pulse' },
     rope: 'rgba(150,150,160,0.30)', // cadenas viejas
     scorch: { types: ['tanker'], color: '40,95,22', alpha: 0.75, bigAlpha: 0.9, life: 6 }, // baba del slime
     abyss: { inner: 'rgba(0,0,1,1)', mid: 'rgba(4,4,6,0.97)', edge: 'rgba(10,10,14,0.92)' },

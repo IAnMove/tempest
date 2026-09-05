@@ -148,6 +148,8 @@ function laneDist(a, b) {
   return d;
 }
 
+function wallDepth(t) { return 0.38 * t / (1 - 0.62 * t); }
+
 // punto del tubo: carril (puede ser fraccionario) y profundidad t (0 = fondo, 1 = borde)
 function webPoint(shape, lane, t) {
   const i = Math.floor(wrapLane(lane));
@@ -158,6 +160,15 @@ function webPoint(shape, lane, t) {
   const a = a0 + (a1 - a0) * f;
   const r0 = shape.fn(a0);
   const r1 = shape.fn(laneAngle(j));
+  if (theme.drawBackground) {
+    // Proyeccion de un pozo profundo: el avance se amplifica cerca de la camara.
+    const depth = wallDepth(t);
+    const rr = (r0 + (r1 - r0) * f) * R * (0.12 + 0.88 * depth);
+    const x = CX + Math.cos(a) * rr;
+    const y = CY - R * 0.14 * (1 - depth) + Math.sin(a) * rr * 0.90;
+    const bottomY = CY - R * 0.14;
+    return { x, y, a: Math.atan2(y - bottomY, x - CX) };
+  }
   const rr = (r0 + (r1 - r0) * f) * R * (0.10 + 0.90 * t);
   return { x: CX + Math.cos(a) * rr, y: CY + Math.sin(a) * rr, a };
 }
@@ -227,7 +238,7 @@ let level = 1;
 let shape = SHAPES[0];
 let zapAvail = true;
 
-let player = { lane: 0, cool: 0, invuln: 0 };
+let player = { lane: 0, cool: 0, invuln: 0, moveDir: 0, moveCool: 0 };
 let shots = [];      // {lane, t}
 let enemies = [];    // {type, lane, t, speed, targetLane, flipWait, rim, rot}
 let particles = [];  // {x, y, vx, vy, life, maxLife, color}
@@ -290,13 +301,14 @@ let theme = THEMES[themeIndex];
 function selectTheme(i) {
   themeIndex = ((i % THEMES.length) + THEMES.length) % THEMES.length;
   theme = THEMES[themeIndex];
+  if (theme.reset) theme.reset();
   try { localStorage.setItem('tempestTheme', theme.id); } catch (e) { /* sin storage */ }
 }
 
 // contexto que reciben los hooks de dibujo de los temas
 function hookCtx() {
   return {
-    ctx, sctx, sStroke, webPoint, shape, R, elapsed, LANES,
+    ctx, sctx, sStroke, webPoint, wallDepth, shape, R, elapsed, LANES,
     W, H, CX, CY,
     player, muzzle, enemies, shots, spikes,
     state, ST, level, levelHue, webPulse,
@@ -359,8 +371,9 @@ function startGame() {
 }
 
 function startLevel() {
+  if (theme.reset) theme.reset();
   shape = SHAPES[(level - 1) % SHAPES.length];
-  player = { lane: 0, cool: 0, invuln: 2 };
+  player = { lane: 0, cool: 0, invuln: 2, moveDir: 0, moveCool: 0 };
   shots = [];
   enemies = [];
   particles = [];
@@ -464,24 +477,36 @@ function handleKeyPress(code) {
 function update(dt) {
   gameTime += dt;
 
-  // disparo
+  // Un paso por apoyo: pulsacion inmediata y repeticion al mantener la tecla.
+  let dir = 0;
+  if (keys.ArrowLeft || keys.KeyA) dir -= 1;
+  if (keys.ArrowRight || keys.KeyD) dir += 1;
+  let moved = false;
+  if (!dir) { player.moveCool = 0; player.moveDir = 0; }
+  else {
+    if (dir !== player.moveDir) player.moveCool = 0;
+    player.moveCool -= dt;
+    if (player.moveCool <= 0) {
+      player.lane = wrapLane(player.lane + dir);
+      player.moveCool += 1 / 6.5;
+      moved = true;
+    }
+    player.moveDir = dir;
+  }
+
+  // El disparo nace en el mismo apoyo que ocupa el jugador.
   player.cool -= dt;
   if (keys.Space && player.cool <= 0) {
-    shots.push({ lane: Math.round(wrapLane(player.lane)) % LANES, t: 1 });
+    shots.push({ lane: player.lane, t: 1 });
     player.cool = 0.13;
     muzzle = 0.06;
     sfx.shoot();
   }
 
-  // movimiento del jugador
-  let dir = 0;
-  if (keys.ArrowLeft || keys.KeyA) dir -= 1;
-  if (keys.ArrowRight || keys.KeyD) dir += 1;
-  player.lane = wrapLane(player.lane + dir * 6.5 * dt);
   player.invuln = Math.max(0, player.invuln - dt);
 
   // estela del motor al moverse
-  if (dir !== 0) {
+  if (moved) {
     const p = webPoint(shape, player.lane, 1.03);
     for (let i = 0; i < 2; i++) {
       particles.push({
@@ -557,7 +582,7 @@ function update(dt) {
         e.dead = true;
         s.dead = true;
         const p = webPoint(shape, e.lane, e.t);
-        explode(p.x, p.y, theme.enemies[e.type].color, 14);
+        explode(p.x, p.y, theme.id === 'bomberos' ? '#aadeff' : theme.enemies[e.type].color, 14);
         addScore(theme.enemies[e.type].score);
         if (e.type === 'tanker') {
           sfx.tanker();
@@ -912,8 +937,13 @@ function drawGameOver() {
 function drawScene(warpK) {
   // estelas: fundir el frame anterior en vez de borrar
   sctx.globalCompositeOperation = 'source-over';
-  sctx.fillStyle = 'rgba(2,2,10,0.30)';
-  sctx.fillRect(0, 0, W, H);
+  if (theme.drawBackground) {
+    // Los sprites y el agua necesitan contornos limpios sobre la pared.
+    sctx.clearRect(0, 0, W, H);
+  } else {
+    sctx.fillStyle = 'rgba(2,2,10,0.30)';
+    sctx.fillRect(0, 0, W, H);
+  }
   sctx.globalCompositeOperation = 'lighter';
 
   if (state === ST.TITLE || state === ST.GAMEOVER) {

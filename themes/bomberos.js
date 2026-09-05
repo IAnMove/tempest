@@ -27,13 +27,15 @@
     fondoDim: 0.4,
     playerSize: 110,
 
+    motion: { flipper: 'flame', tanker: 'flame', spiker: 'flame' },
     rope: null,
     flicker: true,
     bright: [0.7, 1.0],
     spriteGain: 0.8, // las llamas deben quedar brillantes
-    scorch: true,    // el fuego va dejando la pared chamuscada
+    scorch: { flames: true, life: 18 },    // llamas adheridas a la pared que el agua apaga
     shots: 'agua',
     glowCenter: '255,120,25',
+    glowAlpha: 0.08,
     abyss: { inner: 'rgba(255,120,20,1)', mid: 'rgba(120,40,8,0.97)', edge: 'rgba(20,10,6,0.92)' },
     wall: '60,40,34',
     rimDark: 'rgba(10,6,6,0.95)',

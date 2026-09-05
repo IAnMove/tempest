@@ -24,6 +24,7 @@
     files: { player: 'torreta', flipper: 'cangrejo', tanker: 'tortuga', spiker: 'medusa' },
     fondo: true,
 
+    motion: { spiker: 'float' },
     rope: 'rgba(172,142,96,0.38)',
     abyss: { inner: 'rgba(0,0,2,1)', mid: 'rgba(2,8,12,0.97)', edge: 'rgba(6,18,22,0.92)' },
     wall: '58,102,96',

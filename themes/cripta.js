@@ -27,6 +27,7 @@
     fondoDim: 0.35,
     solidPlayer: true, // la gárgola es piedra oscura: opaca sobre la cornisa
 
+    motion: { flipper: 'float', spiker: 'flap' },
     rope: null,
     bright: [0.5, 1.0],
     // ectoplasma frío: estela azulada que dejan los fantasmas
