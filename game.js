@@ -894,10 +894,15 @@ function drawHUD() {
 }
 
 function drawTitle() {
+  // Escala el bloque completo para mantener instrucciones y acceso dentro de la ventana.
+  const fit = Math.min(1, W / 900, H / 800);
+  ctx.save();
+  ctx.translate(W / 2, (H - 800 * fit) / 2);
+  ctx.scale(fit, fit);
   const pulse = 1 + 0.04 * Math.sin(elapsed * 3);
-  const size = Math.min(72, W / 12) * pulse;
-  text('T E M P E S T', W / 2, H * 0.30, size, '#00ffee');
-  text('un clon actualizado del clásico de 1981', W / 2, H * 0.30 + 58, 16, '#008888');
+  const size = 72 * pulse;
+  text('T E M P E S T', 0, 240, size, '#00ffee');
+  text('un clon actualizado del clásico de 1981', 0, 240 + 58, 16, '#008888');
   const lines = [
     '← →  o  A D    moverse por el borde',
     'ESPACIO        disparar',
@@ -907,20 +912,21 @@ function drawTitle() {
     'destruye todo lo que suba por el tubo',
     'cuidado con los pinchos verdes: dispárales para recortarlos',
   ];
-  let y = H * 0.52;
-  for (const l of lines) { text(l, W / 2, y, 16, '#aaaaaa'); y += 26; }
+  let y = 416;
+  for (const l of lines) { text(l, 0, y, 16, '#aaaaaa'); y += 26; }
   y += 14;
   if (THEMES.length > 1) {
-    text('TEMA   ‹ ' + theme.name + ' ›', W / 2, y, 18, '#ffee33');
+    text('TEMA   ‹ ' + theme.name + ' ›', 0, y, 18, '#ffee33');
     y += 24;
-    text('← → cambiar · ' + theme.desc, W / 2, y, 13, '#008888');
+    text('← → cambiar · ' + theme.desc, 0, y, 13, '#008888');
     y += 26;
   }
-  if (hiScore > 0) { text('RÉCORD ' + hiScore, W / 2, y, 16, '#ffee33'); y += 28; }
+  if (hiScore > 0) { text('RÉCORD ' + hiScore, 0, y, 16, '#ffee33'); y += 28; }
   y += 14;
   if (Math.floor(elapsed * 2) % 2 === 0) {
-    text('PULSA ENTER', W / 2, y, 22, '#ffee33');
+    text('PULSA ENTER', 0, y, 22, '#ffee33');
   }
+  ctx.restore();
 }
 
 function drawGameOver() {
@@ -977,11 +983,11 @@ function render(warpK) {
   drawStarsMain(warpK);
 
   // escena con estelas -> bloom -> nítida
-  drawScene(warpK);
   const sx = (Math.random() * 2 - 1) * shake;
   const sy = (Math.random() * 2 - 1) * shake;
   ctx.save();
   ctx.translate(sx, sy);
+  drawScene(warpK);
   ctx.globalCompositeOperation = 'lighter';
   try {
     ctx.filter = 'blur(6px)';
