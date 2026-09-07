@@ -1,0 +1,4 @@
+# assets fuente (GLB de Meshy, pesados) y herramientas de desarrollo
+source_assets/
+.dev/
+_shot_*.png

@@ -148,6 +148,8 @@ function laneDist(a, b) {
   return d;
 }
 
+function wallDepth(t) { return 0.38 * t / (1 - 0.62 * t); }
+
 // punto del tubo: carril (puede ser fraccionario) y profundidad t (0 = fondo, 1 = borde)
 function webPoint(shape, lane, t) {
   const i = Math.floor(wrapLane(lane));
@@ -158,6 +160,15 @@ function webPoint(shape, lane, t) {
   const a = a0 + (a1 - a0) * f;
   const r0 = shape.fn(a0);
   const r1 = shape.fn(laneAngle(j));
+  if (theme.drawBackground) {
+    // Proyeccion de un pozo profundo: el avance se amplifica cerca de la camara.
+    const depth = wallDepth(t);
+    const rr = (r0 + (r1 - r0) * f) * R * (0.12 + 0.88 * depth);
+    const x = CX + Math.cos(a) * rr;
+    const y = CY - R * 0.14 * (1 - depth) + Math.sin(a) * rr * 0.90;
+    const bottomY = CY - R * 0.14;
+    return { x, y, a: Math.atan2(y - bottomY, x - CX) };
+  }
   const rr = (r0 + (r1 - r0) * f) * R * (0.10 + 0.90 * t);
   return { x: CX + Math.cos(a) * rr, y: CY + Math.sin(a) * rr, a };
 }
@@ -227,7 +238,7 @@ let level = 1;
 let shape = SHAPES[0];
 let zapAvail = true;
 
-let player = { lane: 0, cool: 0, invuln: 0 };
+let player = { lane: 0, cool: 0, invuln: 0, moveDir: 0, moveCool: 0 };
 let shots = [];      // {lane, t}
 let enemies = [];    // {type, lane, t, speed, targetLane, flipWait, rim, rot}
 let particles = [];  // {x, y, vx, vy, life, maxLife, color}
@@ -236,11 +247,73 @@ let spawnQueue = []; // {time, type}
 let gameTime = 0;
 let stateTimer = 0;
 
-const ENEMY_STYLE = {
-  flipper: { color: '#ff4422', score: 150 },
-  tanker:  { color: '#cc66ff', score: 100 },
-  spiker:  { color: '#33ff66', score: 50  },
+/* ---------------- temas ----------------
+   Un tema define la paleta y puede sobrescribir el dibujo del jugador,
+   los enemigos, los pinchos, los disparos y el fondo mediante hooks
+   opcionales: drawPlayer, drawEnemies, drawSpikes, drawShots, drawBackground.
+   Los temas extra viven en themes/*.js, se autorregistran en
+   window.TEMPEST_THEMES y se cargan antes que game.js.
+   Plantilla para copiar: themes/placeholder.js */
+
+const CLASSIC_THEME = {
+  id: 'clasico',
+  name: 'CLÁSICO',
+  desc: 'la experiencia vectorial original',
+  playerColor: '#ffee33',
+  engineColor: '#ffcc44',
+  shotColor: '#aaddff',
+  spikeColor: '#33ff66',
+  spikeDangerColor: '#ff3333',
+  zapColor: '#ff66ff',
+  enemies: {
+    flipper: { color: '#ff4422', score: 150 },
+    tanker:  { color: '#cc66ff', score: 100 },
+    spiker:  { color: '#33ff66', score: 50  },
+  },
+  // sin hooks: usa el dibujo vectorial por defecto
 };
+
+const THEMES = [CLASSIC_THEME].concat(
+  (typeof window !== 'undefined' && window.TEMPEST_THEMES) || []
+);
+
+let themeIndex = 0;
+try {
+  const saved = localStorage.getItem('tempestTheme');
+  const i = THEMES.findIndex(t => t.id === saved);
+  if (i >= 0) themeIndex = i;
+} catch (e) { /* sin storage */ }
+
+// parámetros URL: ?tema=marino fuerza el tema, &jugar=1 entra directo
+let autoStart = false;
+try {
+  const q = new URLSearchParams(window.location.search);
+  const t = q.get('tema');
+  if (t) {
+    const i = THEMES.findIndex(x => x.id === t);
+    if (i >= 0) themeIndex = i;
+  }
+  autoStart = q.get('jugar') === '1';
+} catch (e) { /* sin location */ }
+
+let theme = THEMES[themeIndex];
+
+function selectTheme(i) {
+  themeIndex = ((i % THEMES.length) + THEMES.length) % THEMES.length;
+  theme = THEMES[themeIndex];
+  if (theme.reset) theme.reset();
+  try { localStorage.setItem('tempestTheme', theme.id); } catch (e) { /* sin storage */ }
+}
+
+// contexto que reciben los hooks de dibujo de los temas
+function hookCtx() {
+  return {
+    ctx, sctx, sStroke, webPoint, wallDepth, shape, R, elapsed, LANES,
+    W, H, CX, CY,
+    player, muzzle, enemies, shots, spikes,
+    state, ST, level, levelHue, webPulse,
+  };
+}
 
 function levelHue() { return (level * 47) % 360; }
 
@@ -285,7 +358,7 @@ function spawnEnemy(type) {
   enemies.push(e);
   sfx.spawn();
   const p = webPoint(shape, lane, 0.05);
-  addShockwave(p.x, p.y, ENEMY_STYLE[type].color, false);
+  addShockwave(p.x, p.y, theme.enemies[type].color, false);
 }
 
 /* ---------------- ciclo de vida ---------------- */
@@ -298,8 +371,9 @@ function startGame() {
 }
 
 function startLevel() {
+  if (theme.reset) theme.reset();
   shape = SHAPES[(level - 1) % SHAPES.length];
-  player = { lane: 0, cool: 0, invuln: 2 };
+  player = { lane: 0, cool: 0, invuln: 2, moveDir: 0, moveCool: 0 };
   shots = [];
   enemies = [];
   particles = [];
@@ -316,8 +390,8 @@ function killPlayer() {
   if (player.invuln > 0) return;
   sfx.death();
   const p = webPoint(shape, player.lane, 1);
-  explode(p.x, p.y, '#ffee33', 40);
-  addShockwave(p.x, p.y, '#ffee33', true);
+  explode(p.x, p.y, theme.playerColor, 40);
+  addShockwave(p.x, p.y, theme.playerColor, true);
   addShake(18);
   flash = Math.max(flash, 0.5);
   lives--;
@@ -373,10 +447,10 @@ function fireSuperzap() {
   for (const e of enemies) {
     const p = webPoint(shape, e.lane, e.t);
     zapBolts.push({ pts: makeBolt(from.x, from.y, p.x, p.y), life: 0.3, maxLife: 0.3 });
-    explode(p.x, p.y, ENEMY_STYLE[e.type].color, 10);
-    addScore(ENEMY_STYLE[e.type].score);
+    explode(p.x, p.y, theme.enemies[e.type].color, 10);
+    addScore(theme.enemies[e.type].score);
   }
-  addShockwave(from.x, from.y, '#ff66ff', true);
+  addShockwave(from.x, from.y, theme.zapColor, true);
   enemies = [];
 }
 
@@ -384,6 +458,10 @@ function handleKeyPress(code) {
   if (code === 'Enter') {
     audio(); // desbloquear audio con gesto del usuario
     if (state === ST.TITLE || state === ST.GAMEOVER) startGame();
+  }
+  if (state === ST.TITLE && THEMES.length > 1) {
+    if (code === 'ArrowLeft' || code === 'ArrowUp') selectTheme(themeIndex - 1);
+    if (code === 'ArrowRight' || code === 'ArrowDown') selectTheme(themeIndex + 1);
   }
   if (state === ST.PLAYING && (code === 'ShiftLeft' || code === 'ShiftRight' || code === 'KeyZ')) {
     fireSuperzap();
@@ -399,24 +477,36 @@ function handleKeyPress(code) {
 function update(dt) {
   gameTime += dt;
 
-  // disparo
+  // Un paso por apoyo: pulsacion inmediata y repeticion al mantener la tecla.
+  let dir = 0;
+  if (keys.ArrowLeft || keys.KeyA) dir -= 1;
+  if (keys.ArrowRight || keys.KeyD) dir += 1;
+  let moved = false;
+  if (!dir) { player.moveCool = 0; player.moveDir = 0; }
+  else {
+    if (dir !== player.moveDir) player.moveCool = 0;
+    player.moveCool -= dt;
+    if (player.moveCool <= 0) {
+      player.lane = wrapLane(player.lane + dir);
+      player.moveCool += 1 / 6.5;
+      moved = true;
+    }
+    player.moveDir = dir;
+  }
+
+  // El disparo nace en el mismo apoyo que ocupa el jugador.
   player.cool -= dt;
   if (keys.Space && player.cool <= 0) {
-    shots.push({ lane: Math.round(wrapLane(player.lane)) % LANES, t: 1 });
+    shots.push({ lane: player.lane, t: 1 });
     player.cool = 0.13;
     muzzle = 0.06;
     sfx.shoot();
   }
 
-  // movimiento del jugador
-  let dir = 0;
-  if (keys.ArrowLeft || keys.KeyA) dir -= 1;
-  if (keys.ArrowRight || keys.KeyD) dir += 1;
-  player.lane = wrapLane(player.lane + dir * 6.5 * dt);
   player.invuln = Math.max(0, player.invuln - dt);
 
   // estela del motor al moverse
-  if (dir !== 0) {
+  if (moved) {
     const p = webPoint(shape, player.lane, 1.03);
     for (let i = 0; i < 2; i++) {
       particles.push({
@@ -425,7 +515,7 @@ function update(dt) {
         vy: (Math.random() - 0.5) * 60 * (R / 300),
         life: 0.25 + Math.random() * 0.2,
         maxLife: 0.45,
-        color: '#ffcc44',
+        color: theme.engineColor,
       });
     }
   }
@@ -481,7 +571,7 @@ function update(dt) {
       s.dead = true;
       addScore(10);
       const p = webPoint(shape, s.lane, Math.max(0.02, sl));
-      explode(p.x, p.y, '#33ff66', 4);
+      explode(p.x, p.y, theme.spikeColor, 4);
       continue;
     }
 
@@ -492,11 +582,11 @@ function update(dt) {
         e.dead = true;
         s.dead = true;
         const p = webPoint(shape, e.lane, e.t);
-        explode(p.x, p.y, ENEMY_STYLE[e.type].color, 14);
-        addScore(ENEMY_STYLE[e.type].score);
+        explode(p.x, p.y, theme.id === 'bomberos' ? '#aadeff' : theme.enemies[e.type].color, 14);
+        addScore(theme.enemies[e.type].score);
         if (e.type === 'tanker') {
           sfx.tanker();
-          addShockwave(p.x, p.y, ENEMY_STYLE.tanker.color, true);
+          addShockwave(p.x, p.y, theme.enemies.tanker.color, true);
           addShake(4);
           for (const off of [-1, 1]) {
             enemies.push({
@@ -563,6 +653,7 @@ function sStroke(pts, close, color, width, glow) {
 }
 
 function drawWeb(zoom, alpha) {
+  if (theme.drawWeb) { theme.drawWeb(hookCtx(), zoom || 1, alpha); return; }
   const hue = levelHue();
   const breathe = 0.72 + 0.28 * Math.sin(elapsed * 2.2);
   const z = zoom || 1;
@@ -599,6 +690,7 @@ function drawWeb(zoom, alpha) {
 function drawPlayer() {
   if (state === ST.DYING) return;
   if (player.invuln > 0 && Math.floor(player.invuln * 10) % 2 === 0) return; // parpadeo
+  if (theme.drawPlayer) { theme.drawPlayer(hookCtx()); return; }
   const l = player.lane;
   const pts = [
     webPoint(shape, l - 0.42, 1.01),
@@ -607,11 +699,11 @@ function drawPlayer() {
     webPoint(shape, l + 0.15, 0.97),
     webPoint(shape, l + 0.42, 1.01),
   ];
-  sStroke(pts, false, '#ffee33', 3, true);
+  sStroke(pts, false, theme.playerColor, 3, true);
   // núcleo brillante
   const c = webPoint(shape, l, 1.0);
   sctx.fillStyle = '#fff7cc';
-  sctx.shadowColor = '#ffee33';
+  sctx.shadowColor = theme.playerColor;
   sctx.shadowBlur = 18;
   sctx.beginPath();
   sctx.arc(c.x, c.y, 3.5 * (R / 300) + 1.5, 0, Math.PI * 2);
@@ -627,12 +719,13 @@ function drawPlayer() {
 }
 
 function drawShots() {
+  if (theme.drawShots) { theme.drawShots(hookCtx()); return; }
   for (const s of shots) {
     const p1 = webPoint(shape, s.lane, Math.max(0, s.t - 0.06));
     const p2 = webPoint(shape, s.lane, s.t);
-    sStroke([p1, p2], false, '#aaddff', 2.5, true);
+    sStroke([p1, p2], false, theme.shotColor, 2.5, true);
     sctx.fillStyle = '#ffffff';
-    sctx.shadowColor = '#aaddff';
+    sctx.shadowColor = theme.shotColor;
     sctx.shadowBlur = 14;
     sctx.beginPath();
     sctx.arc(p2.x, p2.y, 3 * (R / 300) + 1, 0, Math.PI * 2);
@@ -642,10 +735,11 @@ function drawShots() {
 }
 
 function drawEnemies() {
+  if (theme.drawEnemies) { theme.drawEnemies(hookCtx()); return; }
   for (const e of enemies) {
     const p = webPoint(shape, e.lane, e.t);
     const s = (5 + 15 * e.t) * (R / 300);
-    const color = ENEMY_STYLE[e.type].color;
+    const color = theme.enemies[e.type].color;
     sctx.save();
     sctx.translate(p.x, p.y);
     sctx.rotate(e.rot);
@@ -682,13 +776,15 @@ function drawEnemies() {
 }
 
 function drawSpikes() {
+  if (theme.drawSpikes) { theme.drawSpikes(hookCtx()); return; }
   for (let i = 0; i < LANES; i++) {
     if (spikes[i] > 0.02) {
       const p1 = webPoint(shape, i, 0.02);
       const p2 = webPoint(shape, i, spikes[i]);
       const danger = spikes[i] > 0.8;
-      const blink = danger ? (0.6 + 0.4 * Math.sin(elapsed * 12)) : 1;
-      sStroke([p1, p2], false, danger ? `rgba(255,51,51,${blink})` : '#33ff66', 2.2, danger);
+      if (danger) sctx.globalAlpha = 0.6 + 0.4 * Math.sin(elapsed * 12); // parpadeo
+      sStroke([p1, p2], false, danger ? theme.spikeDangerColor : theme.spikeColor, 2.2, danger);
+      sctx.globalAlpha = 1;
     }
   }
 }
@@ -798,10 +894,15 @@ function drawHUD() {
 }
 
 function drawTitle() {
+  // Escala el bloque completo para mantener instrucciones y acceso dentro de la ventana.
+  const fit = Math.min(1, W / 900, H / 800);
+  ctx.save();
+  ctx.translate(W / 2, (H - 800 * fit) / 2);
+  ctx.scale(fit, fit);
   const pulse = 1 + 0.04 * Math.sin(elapsed * 3);
-  const size = Math.min(72, W / 12) * pulse;
-  text('T E M P E S T', W / 2, H * 0.30, size, '#00ffee');
-  text('un clon actualizado del clásico de 1981', W / 2, H * 0.30 + 58, 16, '#008888');
+  const size = 72 * pulse;
+  text('T E M P E S T', 0, 240, size, '#00ffee');
+  text('un clon actualizado del clásico de 1981', 0, 240 + 58, 16, '#008888');
   const lines = [
     '← →  o  A D    moverse por el borde',
     'ESPACIO        disparar',
@@ -811,11 +912,21 @@ function drawTitle() {
     'destruye todo lo que suba por el tubo',
     'cuidado con los pinchos verdes: dispárales para recortarlos',
   ];
-  lines.forEach((l, i) => text(l, W / 2, H * 0.52 + i * 26, 16, '#aaaaaa'));
-  if (hiScore > 0) text('RÉCORD ' + hiScore, W / 2, H * 0.76, 16, '#ffee33');
-  if (Math.floor(elapsed * 2) % 2 === 0) {
-    text('PULSA ENTER', W / 2, H * 0.85, 22, '#ffee33');
+  let y = 416;
+  for (const l of lines) { text(l, 0, y, 16, '#aaaaaa'); y += 26; }
+  y += 14;
+  if (THEMES.length > 1) {
+    text('TEMA   ‹ ' + theme.name + ' ›', 0, y, 18, '#ffee33');
+    y += 24;
+    text('← → cambiar · ' + theme.desc, 0, y, 13, '#008888');
+    y += 26;
   }
+  if (hiScore > 0) { text('RÉCORD ' + hiScore, 0, y, 16, '#ffee33'); y += 28; }
+  y += 14;
+  if (Math.floor(elapsed * 2) % 2 === 0) {
+    text('PULSA ENTER', 0, y, 22, '#ffee33');
+  }
+  ctx.restore();
 }
 
 function drawGameOver() {
@@ -832,8 +943,13 @@ function drawGameOver() {
 function drawScene(warpK) {
   // estelas: fundir el frame anterior en vez de borrar
   sctx.globalCompositeOperation = 'source-over';
-  sctx.fillStyle = 'rgba(2,2,10,0.30)';
-  sctx.fillRect(0, 0, W, H);
+  if (theme.drawBackground) {
+    // Los sprites y el agua necesitan contornos limpios sobre la pared.
+    sctx.clearRect(0, 0, W, H);
+  } else {
+    sctx.fillStyle = 'rgba(2,2,10,0.30)';
+    sctx.fillRect(0, 0, W, H);
+  }
   sctx.globalCompositeOperation = 'lighter';
 
   if (state === ST.TITLE || state === ST.GAMEOVER) {
@@ -862,15 +978,16 @@ function render(warpK) {
   ctx.globalCompositeOperation = 'source-over';
   ctx.fillStyle = '#02020a';
   ctx.fillRect(0, 0, W, H);
-  drawNebula();
+  if (theme.drawBackground) theme.drawBackground(hookCtx());
+  else drawNebula();
   drawStarsMain(warpK);
 
   // escena con estelas -> bloom -> nítida
-  drawScene(warpK);
   const sx = (Math.random() * 2 - 1) * shake;
   const sy = (Math.random() * 2 - 1) * shake;
   ctx.save();
   ctx.translate(sx, sy);
+  drawScene(warpK);
   ctx.globalCompositeOperation = 'lighter';
   try {
     ctx.filter = 'blur(6px)';
@@ -941,4 +1058,5 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 resize();
+if (autoStart) startGame();
 requestAnimationFrame(frame);

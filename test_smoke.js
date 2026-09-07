@@ -28,6 +28,14 @@ global.document = {
 };
 global.requestAnimationFrame = cb => { rafCb = cb; };
 
+// cargar los temas igual que index.html (antes que game.js)
+for (const f of [
+  'themes/placeholder.js', 'themes/sima.js', 'themes/marino.js',
+  'themes/aranas.js', 'themes/volcan.js', 'themes/mazmorra.js', 'themes/bomberos.js',
+]) {
+  try { require('./' + f); } catch (e) { console.log('tema no cargado:', f, e.message); }
+}
+
 require('./game.js');
 
 function key(code, down = true) {
@@ -43,8 +51,12 @@ function step(ms) {
   if (!rafCb) throw new Error('el bucle no pidió otro frame');
 }
 
-// título
+// título + cambiar de tema con las flechas
 for (let i = 0; i < 10; i++) step(16);
+key('ArrowRight');
+for (let i = 0; i < 5; i++) step(16);
+key('ArrowLeft');
+for (let i = 0; i < 5; i++) step(16);
 
 // empezar partida
 key('Enter');
